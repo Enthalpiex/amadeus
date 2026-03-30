@@ -37,9 +37,9 @@ async def transcribe(audio, api_key=None, base_url=None, model=None):
     whisper_base_url = base_url if base_url else DEFAULT_WHISPER_BASE_URL
     whisper_model = model if model else DEFAULT_WHISPER_MODEL
     
-    # 检查必要的 API 密钥和基础 URL
-    if not whisper_api_key or not whisper_base_url:
-        logging.error("缺少 Whisper API 密钥或基础 URL，无法进行转录")
+    # 检查必要的基础 URL（本地服务可不需要 API 密钥）
+    if not whisper_base_url:
+        logging.error("缺少 Whisper API 基础 URL，无法进行转录")
         return ""
     
     # 日志记录使用的模型

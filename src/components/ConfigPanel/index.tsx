@@ -271,6 +271,9 @@ const ConfigPanel = ({ open, onOpenChange, onSave }: ConfigPanelProps): JSX.Elem
                             <SelectValue placeholder={t('placeholders.selectAiModel')} />
                           </SelectTrigger>
                           <SelectContent>
+                            <SelectItem value="qwen/qwen3-vl-8b">qwen/qwen3-vl-8b</SelectItem>
+                            <SelectItem value="qwen/qwen3-vl-4b">qwen/qwen3-vl-4b</SelectItem>
+                            <SelectItem value="qwen/qwen3.5-9b">qwen/qwen3.5-9b</SelectItem>
                             <SelectItem value="gpt-4.1-mini">gpt-4.1-mini</SelectItem>
                             <SelectItem value="gemini-2.0-flash">gemini-2.0-flash</SelectItem>
                             <SelectItem value="claude-3-5-sonnet-20241022">claude-3-5-sonnet-20241022</SelectItem>

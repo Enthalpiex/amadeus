@@ -26,3 +26,7 @@ service/build
 *.njsproj
 *.sln
 *.sw?
+
+# Large local DLL artifacts
+service/webrtc/.venv/Lib/site-packages/torch/lib/torch_cpu.dll
+service/webrtc/.venv/Lib/site-packages/llvmlite/binding/llvmlite.dll

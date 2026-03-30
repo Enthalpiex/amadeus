@@ -103,14 +103,14 @@ def run_emotion_analysis_in_thread(run_predict_emotion, text, client):
         logging.error(f"情感分析出错: {e}")
         return None
 
-def run_tts_in_thread(text_to_speech_stream, segment, voice, segment_id):
+def run_tts_in_thread(text_to_speech_stream, segment, tts_config, segment_id):
     """
     在线程池中运行TTS转换，并将音频块实时添加到共享队列
     
     参数:
         text_to_speech_stream: TTS函数
         segment: 要转换的文本段落
-        voice: 语音配置
+        tts_config: 语音配置（包含voice/api_key/base_url/model）
         segment_id: 段落ID，用于标识音频块所属段落
         
     返回:
@@ -122,7 +122,13 @@ def run_tts_in_thread(text_to_speech_stream, segment, voice, segment_id):
         chunk_count = 0
         start_time = time.time()
         
-        for audio_chunk in text_to_speech_stream(segment, voice=voice):
+        for audio_chunk in text_to_speech_stream(
+            segment,
+            voice=tts_config.get("voice"),
+            api_key=tts_config.get("api_key"),
+            base_url=tts_config.get("base_url"),
+            model=tts_config.get("model"),
+        ):
             chunk_count += 1
             # 直接将音频块放入共享队列，实现实时流式传输
             # 添加时间戳和块序号以便调试
@@ -385,7 +391,7 @@ def process_llm_stream(
                         run_tts_in_thread,
                         text_to_speech_stream,
                         segment, # Original segment for TTS
-                        siliconflow_config.get("voice"),
+                        siliconflow_config,
                         segment_id
                     )
 
@@ -454,7 +460,7 @@ def process_llm_stream(
             run_tts_in_thread,
             text_to_speech_stream,
             last_segment_text, # Use the stripped text
-            siliconflow_config.get("voice"),
+            siliconflow_config,
             last_segment_id
         )
 

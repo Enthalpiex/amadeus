@@ -60,7 +60,7 @@ export const useConfigPanel = (open: boolean, onOpenChange: (open: boolean) => v
     whisper_model: 'whisper-large-v3',
     custom_whisper_model: '',
     siliconflow_voice: '',
-    ai_model: 'gpt-4.1-mini',
+    ai_model: 'qwen/qwen3-vl-8b',
     custom_model_name: '',
     voice_output_language: 'ja',
     text_output_language: 'zh',
@@ -200,15 +200,7 @@ export const useConfigPanel = (open: boolean, onOpenChange: (open: boolean) => v
         newErrors.custom_whisper_model = '请填写自定义 ASR 模型名称';
       }
       
-      // 校验 TTS 配置
-      if (!aiConfig.siliconflow_api_key) {
-        newErrors.siliconflow_api_key = '请填写语音合成 API 密钥';
-      }
-      
-      // 校验语音ID
-      if (!aiConfig.siliconflow_voice) {
-        newErrors.siliconflow_voice = '请完成语音克隆';
-      }
+      // TTS 可使用本地服务，API 密钥和语音 ID 允许留空
       
       // 校验 AI 模型
       if (!aiConfig.ai_model) {
@@ -224,10 +216,7 @@ export const useConfigPanel = (open: boolean, onOpenChange: (open: boolean) => v
         newErrors.max_context_length = '请填写有效的上下文消息数量(至少5)';
       }
       
-      // 校验MEM0 API密钥
-      if (!aiConfig.mem0_api_key) {
-        newErrors.mem0_api_key = '请填写 MEM0 API 密钥';
-      }
+      // MEM0 为可选配置，留空时后端会降级为无记忆模式
     }
     
     // 如果有错误，阻止保存并显示错误

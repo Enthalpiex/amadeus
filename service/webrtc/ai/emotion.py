@@ -16,6 +16,7 @@ load_dotenv()
 # 从环境变量获取默认 API 密钥和基础 URL
 DEFAULT_OPENAI_API_KEY = os.getenv("LLM_API_KEY", "")
 DEFAULT_OPENAI_API_BASE_URL = os.getenv("LLM_BASE_URL", "")
+DEFAULT_EMOTION_MODEL = os.getenv("EMOTION_MODEL", os.getenv("AI_MODEL", "gpt-4.1-nano"))
 
 async def predict_emotion(message, client=None):
     """
@@ -34,7 +35,7 @@ async def predict_emotion(message, client=None):
         
         # 准备请求数据
         data = {
-            "model": "gpt-4.1-nano",
+            "model": DEFAULT_EMOTION_MODEL,
             "messages": [
                 {
                     "role": "system",

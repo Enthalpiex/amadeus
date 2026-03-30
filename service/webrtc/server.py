@@ -38,10 +38,14 @@ vad_model = HumAwareVADModel()
 DEFAULT_LLM_API_KEY = os.getenv("LLM_API_KEY", "")
 DEFAULT_WHISPER_API_KEY = os.getenv("WHISPER_API_KEY", "")
 DEFAULT_SILICONFLOW_API_KEY = os.getenv("SILICONFLOW_API_KEY", "")
+DEFAULT_TTS_API_KEY = os.getenv("TTS_API_KEY", DEFAULT_SILICONFLOW_API_KEY)
 DEFAULT_LLM_BASE_URL = os.getenv("LLM_BASE_URL", "https://api.ephone.ai/v1")
 DEFAULT_WHISPER_BASE_URL = os.getenv("WHISPER_BASE_URL", "https://amadeus-ai-api-2.zeabur.app/v1")
+DEFAULT_TTS_BASE_URL = os.getenv("TTS_BASE_URL", "https://api.siliconflow.cn/v1/audio/speech")
 DEFAULT_AI_MODEL = os.getenv("AI_MODEL")
 DEFAULT_WHISPER_MODEL = os.getenv("WHISPER_MODEL", "whisper-large-v3")
+DEFAULT_TTS_MODEL = os.getenv("TTS_MODEL", "FunAudioLLM/CosyVoice2-0.5B")
+DEFAULT_TTS_VOICE = os.getenv("TTS_VOICE", os.getenv("SILICONFLOW_VOICE", ""))
 DEFAULT_MEM0_API_KEY = os.getenv("MEM0_API_KEY", "")
 # 添加WebRTC流的时间限制和并发限制环境变量
 DEFAULT_TIME_LIMIT = int(os.getenv("TIME_LIMIT", "600"))
@@ -158,8 +162,34 @@ def get_user_whisper_config(webrtc_id: str):
 def get_user_siliconflow_config(webrtc_id: str):
     config = get_user_config(webrtc_id)
     return {
-        "api_key": config.siliconflow_api_key if config and config.siliconflow_api_key else DEFAULT_SILICONFLOW_API_KEY,
-        "voice": config.siliconflow_voice if config and config.siliconflow_voice else None
+        "api_key": (
+            config.tts_api_key
+            if config and getattr(config, "tts_api_key", None)
+            else (
+                config.siliconflow_api_key
+                if config and config.siliconflow_api_key
+                else DEFAULT_TTS_API_KEY
+            )
+        ),
+        "base_url": (
+            config.tts_base_url
+            if config and getattr(config, "tts_base_url", None)
+            else DEFAULT_TTS_BASE_URL
+        ),
+        "model": (
+            config.tts_model
+            if config and getattr(config, "tts_model", None)
+            else DEFAULT_TTS_MODEL
+        ),
+        "voice": (
+            config.tts_voice
+            if config and getattr(config, "tts_voice", None)
+            else (
+                config.siliconflow_voice
+                if config and config.siliconflow_voice
+                else DEFAULT_TTS_VOICE
+            )
+        ),
     }
 
 # 获取用户的MEM0记忆服务配置
@@ -265,6 +295,77 @@ async def run_predict_emotion(message, client=None):
     """
     return await predict_emotion(message, client)
 
+def handle_text_chat(webrtc_id: str, text: str):
+    """
+    处理文本输入的默声模式对话，不依赖麦克风和TTS。
+    """
+    prompt = text.strip()
+    if not prompt:
+        raise ValueError("文本内容不能为空")
+
+    session = get_user_session(webrtc_id)
+    user_id = generate_unique_user_id(session["user_name"])
+
+    mem0_config = get_user_mem0_config(webrtc_id)
+    memory_client = None
+    final_prompt = prompt
+
+    if mem0_config["api_key"]:
+        memory_client = AsyncMemoryClient(api_key=mem0_config["api_key"])
+        search_result = run_async(memory_client.search, query=prompt, user_id=user_id, limit=3)
+        memories_text = "\n".join(memory["memory"] for memory in search_result)
+        final_prompt = f"Relevant Memories/Facts:\n{memories_text}\n\nUser Question: {prompt}"
+    else:
+        logging.info("未配置 MEM0_API_KEY，文本对话跳过记忆检索")
+
+    session["messages"].append({"role": "user", "content": final_prompt})
+
+    client = get_user_openai_client(webrtc_id)
+    model = get_user_ai_model(webrtc_id)
+
+    full_response = ""
+    for _, current_full_response in ai_stream(
+        client,
+        session["messages"],
+        model=model,
+        max_tokens=200,
+        max_context_length=20,
+    ):
+        full_response = current_full_response
+
+    session["messages"].append({"role": "assistant", "content": full_response + " "})
+
+    if memory_client:
+        memory_client.add(
+            [
+                {"role": "user", "content": prompt},
+                {"role": "assistant", "content": full_response},
+            ],
+            user_id=user_id,
+        )
+
+    emotion = "neutral"
+    try:
+        emotion = run_async(run_predict_emotion, full_response, client)
+    except Exception as e:
+        logging.error(f"文本对话情感分析失败: {str(e)}")
+
+    next_action = "share_memory"
+    try:
+        action_planner = ActionPlanner(conversation_history=session["messages"][-5:])
+        next_action = run_async(action_planner.plan_next_action, client)
+        session["next_action"] = next_action
+    except Exception as e:
+        logging.error(f"文本对话规划下一步行动失败: {str(e)}")
+        session["next_action"] = "share_memory"
+
+    return {
+        "prompt": prompt,
+        "response": full_response,
+        "emotion": emotion,
+        "next_action": next_action,
+    }
+
 # 定义echo函数，处理音频输入并返回音频输出
 def echo(audio: tuple[int, np.ndarray], message: str, input_data: InputData, next_action = "", video_frames = None):
     # 获取用户会话状态
@@ -290,13 +391,18 @@ def echo(audio: tuple[int, np.ndarray], message: str, input_data: InputData, nex
             return  # 结束函数
         logging.info(f"STT响应: {prompt}")  # 记录转录结果
     mem0_config = get_user_mem0_config(input_data.webrtc_id)
-    memory_client = AsyncMemoryClient(api_key=mem0_config["api_key"])
-    search_result = run_async(memory_client.search, query=prompt, user_id=user_id, limit=3)
-    logging.info(f"搜索结果: {search_result}")
-    # 确保从搜索结果中正确获取记忆
-    memories_text = "\n".join(memory["memory"] for memory in search_result)
-    logging.info(f"记忆文本: {memories_text}")
-    final_prompt = f"Relevant Memories/Facts:\n{memories_text}\n\nUser Question: {prompt}"
+    memory_client = None
+    if mem0_config["api_key"]:
+        memory_client = AsyncMemoryClient(api_key=mem0_config["api_key"])
+        search_result = run_async(memory_client.search, query=prompt, user_id=user_id, limit=3)
+        logging.info(f"搜索结果: {search_result}")
+        # 确保从搜索结果中正确获取记忆
+        memories_text = "\n".join(memory["memory"] for memory in search_result)
+        logging.info(f"记忆文本: {memories_text}")
+        final_prompt = f"Relevant Memories/Facts:\n{memories_text}\n\nUser Question: {prompt}"
+    else:
+        logging.info("未配置 MEM0_API_KEY，跳过记忆检索")
+        final_prompt = prompt
     if next_action == "":
         # 将用户的输入添加到用户消息历史
         session["messages"].append({"role": "user", "content": final_prompt})
@@ -375,7 +481,8 @@ def echo(audio: tuple[int, np.ndarray], message: str, input_data: InputData, nex
     logging.info(f"LLM响应: {full_response}")  # 记录LLM响应
     
     # 保存对话记忆
-    memory_client.add(conversation_messages, user_id=user_id)
+    if memory_client:
+        memory_client.add(conversation_messages, user_id=user_id)
     logging.info(f"LLM耗时 {time.time() - llm_time} 秒")  # 记录LLM所用时间
     
     # LLM响应完成后，规划下一步行动

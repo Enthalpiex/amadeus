@@ -15,10 +15,14 @@ class InputData(BaseModel):
     llm_api_key: Optional[str] = None
     whisper_api_key: Optional[str] = None
     siliconflow_api_key: Optional[str] = None
+    tts_api_key: Optional[str] = None
     llm_base_url: Optional[str] = None
     whisper_base_url: Optional[str] = None
+    tts_base_url: Optional[str] = None
     whisper_model: Optional[str] = None  # 添加ASR模型字段
     siliconflow_voice: Optional[str] = None
+    tts_voice: Optional[str] = None
+    tts_model: Optional[str] = None
     ai_model: Optional[str] = None
     voice_output_language: Optional[str] = None
     text_output_language: Optional[str] = None
@@ -39,6 +43,11 @@ class VideoFrameData(BaseModel):
     webrtc_id: str
     frame_data: str  # base64编码的视频帧数据
     timestamp: Optional[float] = None  # 可选的时间戳
+
+# 文本对话请求模型（默声模式）
+class TextChatRequest(BaseModel):
+    webrtc_id: str
+    text: str
 
 # 添加用于内置服务的简化数据模型
 class BuiltinServiceRequest(BaseModel):
@@ -160,10 +169,14 @@ async def use_builtin_service(data: BuiltinServiceRequest):
         llm_api_key=os.environ.get("LLM_API_KEY", ""),
         whisper_api_key=os.environ.get("WHISPER_API_KEY", ""),
         siliconflow_api_key=os.environ.get("SILICONFLOW_API_KEY", ""),
+        tts_api_key=os.environ.get("TTS_API_KEY", os.environ.get("SILICONFLOW_API_KEY", "")),
         llm_base_url=os.environ.get("LLM_BASE_URL", ""),
         whisper_base_url=os.environ.get("WHISPER_BASE_URL", ""),
+        tts_base_url=os.environ.get("TTS_BASE_URL", "https://api.siliconflow.cn/v1/audio/speech"),
         whisper_model=data.whisper_model or os.environ.get("WHISPER_MODEL", "whisper-large-v3"),  # 使用ASR模型字段
         siliconflow_voice=os.environ.get("SILICONFLOW_VOICE", ""),
+        tts_voice=os.environ.get("TTS_VOICE", os.environ.get("SILICONFLOW_VOICE", "")),
+        tts_model=os.environ.get("TTS_MODEL", "FunAudioLLM/CosyVoice2-0.5B"),
         ai_model=data.ai_model or os.environ.get("AI_MODEL", "gpt-4o-mini"),
         voice_output_language=data.voice_output_language or os.environ.get("VOICE_OUTPUT_LANGUAGE", "zh"),
         text_output_language=data.text_output_language or os.environ.get("TEXT_OUTPUT_LANGUAGE", "zh"),
@@ -202,6 +215,18 @@ async def ai_trigger_reset(data: InputData):
     config = get_user_config(data.webrtc_id)
     stream.set_input(data.webrtc_id, "config_updated", config, "")
     return {"status": "success", "message": "reset请求已接收"}
+
+@router.post("/text-chat")
+async def text_chat(data: TextChatRequest):
+    logging.info(f"接收到用户 {data.webrtc_id} 的文本对话请求")
+    try:
+        from server import handle_text_chat
+
+        result = handle_text_chat(data.webrtc_id, data.text)
+        return {"status": "success", **result}
+    except Exception as e:
+        logging.error(f"处理文本对话请求失败: {e}")
+        return {"status": "error", "message": str(e)}
 
 # 简化：控制摄像头状态的接口
 @router.post("/camera-state")

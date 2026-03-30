@@ -18,6 +18,10 @@ load_dotenv()
 # 从环境变量获取默认的 API 密钥和语音模型
 DEFAULT_SILICONFLOW_API_KEY = os.getenv("SILICONFLOW_API_KEY", "")
 DEFAULT_SILICONFLOW_VOICE = os.getenv("SILICONFLOW_VOICE", "speech:siliconflow-kurisu:clzv7bjjm041fufyct2z0setm:mphrsbbmvrjfophbsted")
+DEFAULT_TTS_API_KEY = os.getenv("TTS_API_KEY", DEFAULT_SILICONFLOW_API_KEY)
+DEFAULT_TTS_BASE_URL = os.getenv("TTS_BASE_URL", "https://api.siliconflow.cn/v1/audio/speech")
+DEFAULT_TTS_MODEL = os.getenv("TTS_MODEL", "FunAudioLLM/CosyVoice2-0.5B")
+DEFAULT_TTS_VOICE = os.getenv("TTS_VOICE", DEFAULT_SILICONFLOW_VOICE)
 
 # 从环境变量获取OpenAI API密钥
 LLM_BASE_URL = os.getenv("LLM_BASE_URL")
@@ -82,7 +86,7 @@ def translate_text(text, target_language, source_language='zh'):
         logging.error(f"使用OpenAI SDK进行翻译时出错: {e}")
         return text
 
-def text_to_speech_stream(text, voice=None, sample_rate=32000, api_key=None):
+def text_to_speech_stream(text, voice=None, sample_rate=32000, api_key=None, base_url=None, model=None):
     """
     将文本转换为语音流
     
@@ -90,7 +94,9 @@ def text_to_speech_stream(text, voice=None, sample_rate=32000, api_key=None):
         text (str): 要转换为语音的文本
         voice (str): 使用的声音模型，如不指定则使用环境变量中的设置
         sample_rate (int): 采样率，默认为32000Hz
-        api_key (str): SiliconFlow API 密钥，如不指定则使用环境变量中的设置
+        api_key (str): TTS API 密钥，如不指定则使用环境变量中的设置
+        base_url (str): TTS 服务地址，如不指定则使用环境变量中的设置
+        model (str): TTS 模型名，如不指定则使用环境变量中的设置
         
     返回:
         generator: 生成(sample_rate, audio_array)元组的生成器
@@ -101,36 +107,47 @@ def text_to_speech_stream(text, voice=None, sample_rate=32000, api_key=None):
     
     # 如果未指定voice参数，则使用环境变量中的设置
     if voice is None:
-        voice = DEFAULT_SILICONFLOW_VOICE
+        voice = DEFAULT_TTS_VOICE
     
     # 如果未指定api_key参数，则使用环境变量中的设置
     if api_key is None:
-        api_key = DEFAULT_SILICONFLOW_API_KEY
-    
-    # 检查API密钥是否有效
-    if not api_key:
-        logging.error("缺少SiliconFlow API密钥，无法进行文本转语音")
+        api_key = DEFAULT_TTS_API_KEY
+
+    # 如果未指定base_url参数，则使用环境变量中的设置
+    if base_url is None:
+        base_url = DEFAULT_TTS_BASE_URL
+
+    # 如果未指定model参数，则使用环境变量中的设置
+    if model is None:
+        model = DEFAULT_TTS_MODEL
+
+    if not base_url:
+        logging.error("缺少TTS_BASE_URL，无法进行文本转语音")
         return
         
     # 设置请求头
     headers = {
-        'Authorization': f'Bearer {api_key}',
         'Content-Type': 'application/json',
     }
+    if api_key:
+        headers['Authorization'] = f'Bearer {api_key}'
+    else:
+        logging.info("未提供TTS API密钥，将以无鉴权模式请求TTS端点")
     
     # 设置请求数据
     data = {
-        'model': 'FunAudioLLM/CosyVoice2-0.5B',
+        'model': model,
         'input': text,
-        'voice': voice,
         'sample_rate': sample_rate,
         'response_format': 'pcm',
     }
+    if voice:
+        data['voice'] = voice
     
     try:
         # 发送请求，获取流式响应
         response = requests.post(
-            'https://api.siliconflow.cn/v1/audio/speech',
+            base_url,
             json=data,
             headers=headers,
             stream=True
@@ -180,6 +197,6 @@ def text_to_speech_stream(text, voice=None, sample_rate=32000, api_key=None):
                     except Exception as e:
                         logging.error(f"处理剩余音频数据时出错: {e}")
         else:
-            logging.error(f"SILICONFLOW API返回错误: {response.status_code} {response.text}")
+            logging.error(f"TTS API返回错误: {response.status_code} {response.text}")
     except Exception as e:
         logging.error(f"调用文本转语音API时出错: {e}")

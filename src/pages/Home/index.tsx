@@ -52,6 +52,8 @@ const VoiceAssistant = observer(() => {
   const [showHistory, setShowHistory] = useState(false);
   // 最新的AI消息内容
   const [latestAiMessage, setLatestAiMessage] = useState<string>('');
+  // 默声模式文本输入
+  const [textInput, setTextInput] = useState('');
   // Live2D模型是否已加载完成
   const [isModelReady, setIsModelReady] = useState(false);
   // 是否显示配置面板
@@ -62,6 +64,8 @@ const VoiceAssistant = observer(() => {
   const [isStreaming, setIsStreaming] = useState(false);
   // 是否显示开始对话框
   const [showStartDialog, setShowStartDialog] = useState(false);
+  // 对话模式：语音模式 or 默声模式
+  const [interactionMode, setInteractionMode] = useState<'voice' | 'silent'>('silent');
   // 从全局状态中获取Live2D模型状态
   const { live2dStore } = useStore();
 
@@ -134,8 +138,10 @@ const VoiceAssistant = observer(() => {
     onEmotionResponse: (emotion: string) => {
       console.log('收到情感分析结果:', emotion);
       // 更新live2d模型的情感和动作
-      live2dStore.setEmotion(emotion || '');
-      live2dStore.setMotion(emotion || '');
+      const normalizedEmotion = emotion || 'neutral';
+      live2dStore.setEmotion(normalizedEmotion);
+      // 动作组和情绪组并不总是一一对应，这里统一触发 speaking 动作确保可见反馈
+      live2dStore.setMotion('speaking');
     },
     // 处理其他WebRTC消息的函数
     onMessage: (message: Record<string, unknown>) => {
@@ -157,6 +163,10 @@ const VoiceAssistant = observer(() => {
     // 当检测到超过2秒的音频静音时的处理
     onAudioSilence: () => {
       console.log('检测到音频静音超过2秒');
+
+      if (interactionMode !== 'voice') {
+        return;
+      }
       
       // 如果有WebRTC ID且已连接，触发AI主动对话
       if (webrtcId && isConnected && !isSpeaking && !isLoading && !isStreaming) {
@@ -223,7 +233,7 @@ const VoiceAssistant = observer(() => {
           },
           body: JSON.stringify({ 
             webrtc_id: webrtcId,
-            ai_model: aiConfig?.ai_model,
+            ai_model: '',
             voice_output_language: aiConfig?.voice_output_language || 'ja',
             text_output_language: aiConfig?.text_output_language || 'zh',
             system_prompt: aiConfig?.system_prompt || '',
@@ -254,6 +264,7 @@ const VoiceAssistant = observer(() => {
             system_prompt: aiConfig.system_prompt,
             user_name: aiConfig.user_name,
             max_context_length: aiConfig.max_context_length || 20,
+            is_camera_on: isVideoOn,
           }),
         }).catch(error => {
           console.error('发送自定义服务配置失败:', error);
@@ -412,32 +423,30 @@ const VoiceAssistant = observer(() => {
 
   // 处理摄像头切换的函数
   const handleToggleVideo = useCallback(() => {
-    // 先切换本地状态
-    const newState = !isVideoOn;
-    setIsVideoOn(newState);
-    
-    // 如果没有webrtcId，则不发送请求
+    setIsVideoOn(prev => !prev);
+  }, []);
+
+  useEffect(() => {
     if (!webrtcId) return;
-    
-    // 发送摄像头状态到后端
+
     fetch(`${API_BASE_URL}/camera-state`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ 
+      body: JSON.stringify({
         webrtc_id: webrtcId,
-        is_camera_on: newState
+        is_camera_on: isVideoOn,
       }),
     })
-    .then(response => response.json())
-    .then(data => {
-      console.log('摄像头状态更新响应:', data);
-    })
-    .catch(error => {
-      console.error('摄像头状态更新失败:', error);
-    });
-  }, [isVideoOn, webrtcId]);
+      .then(response => response.json())
+      .then(data => {
+        console.log('摄像头状态更新响应:', data);
+      })
+      .catch(error => {
+        console.error('摄像头状态更新失败:', error);
+      });
+  }, [webrtcId, isVideoOn]);
 
   // 处理视频帧数据发送的函数
   const handleSendVideoFrame = useCallback((message: { type: MessageTypes; data?: string | string[] }) => {
@@ -469,6 +478,94 @@ const VoiceAssistant = observer(() => {
     // 调用WebRTC的切换麦克风函数
     toggleMicrophone();
   }, [toggleMicrophone]);
+
+  // 切换语音/默声模式
+  const handleSwitchMode = useCallback((mode: 'voice' | 'silent') => {
+    setInteractionMode(mode);
+
+    if (mode === 'silent' && !isMicrophoneMuted) {
+      toggleMicrophone();
+    }
+    if (mode === 'voice' && isMicrophoneMuted) {
+      toggleMicrophone();
+    }
+  }, [isMicrophoneMuted, toggleMicrophone]);
+
+  // 发送文本到后端进行默声对话
+  const handleSendText = useCallback(async () => {
+    const prompt = textInput.trim();
+    if (!prompt || !webrtcId || isLoading) return;
+
+    setTextInput('');
+    setLatestAiMessage('');
+    setIsLoading(true);
+    setIsSpeaking(false);
+    setIsStreaming(false);
+    live2dStore.setEmotion('neutral');
+    live2dStore.setMotion('thinking');
+
+    setChatHistory(prevHistory => {
+      const newMessage: ChatMessage = {
+        role: 'user',
+        content: prompt,
+        timestamp: Date.now(),
+      };
+      const updatedHistory = [...prevHistory, newMessage];
+      localStorage.setItem('chatHistory', JSON.stringify(updatedHistory));
+      return updatedHistory;
+    });
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/text-chat`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          webrtc_id: webrtcId,
+          text: prompt,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (data.status === 'success') {
+        const aiText = typeof data.response === 'string' ? data.response : '';
+        const emotion = typeof data.emotion === 'string' ? data.emotion : 'neutral';
+
+        setLatestAiMessage(aiText);
+        const normalizedEmotion = emotion || 'neutral';
+        live2dStore.setEmotion(normalizedEmotion);
+        // 即使情绪为 neutral，也触发 speaking 动作，避免看起来完全静止
+        live2dStore.setMotion(normalizedEmotion === 'neutral' ? 'speaking' : normalizedEmotion);
+
+        if (aiText) {
+          setChatHistory(prevHistory => {
+            const newMessage: ChatMessage = {
+              role: 'assistant',
+              content: aiText,
+              timestamp: Date.now(),
+            };
+            const updatedHistory = [...prevHistory, newMessage];
+            localStorage.setItem('chatHistory', JSON.stringify(updatedHistory));
+            return updatedHistory;
+          });
+        }
+      } else {
+        setLatestAiMessage(data.message || '文本对话请求失败');
+        live2dStore.setEmotion('neutral');
+        live2dStore.setMotion('neutral');
+      }
+    } catch (error) {
+      console.error('文本对话请求失败:', error);
+      setLatestAiMessage('文本对话请求失败，请检查服务连接');
+      live2dStore.setEmotion('neutral');
+      live2dStore.setMotion('neutral');
+    } finally {
+      setIsLoading(false);
+      setIsStreaming(false);
+    }
+  }, [textInput, webrtcId, isLoading, live2dStore]);
 
   return (
     <>
@@ -510,11 +607,50 @@ const VoiceAssistant = observer(() => {
             <span>{latestAiMessage || t('dialog.waiting')}</span>
           )}
         </div>
+        <div className={styles.textInputArea}>
+          <div className={styles.modeSwitch}>
+            <button
+              type="button"
+              className={`${styles.modeButton} ${interactionMode === 'voice' ? styles.modeButtonActive : ''}`}
+              onClick={() => handleSwitchMode('voice')}
+            >
+              麦克风
+            </button>
+            <button
+              type="button"
+              className={`${styles.modeButton} ${interactionMode === 'silent' ? styles.modeButtonActive : ''}`}
+              onClick={() => handleSwitchMode('silent')}
+            >
+              默声模式
+            </button>
+          </div>
+          <input
+            className={styles.textInput}
+            type="text"
+            placeholder={interactionMode === 'voice' ? '语音模式下也可输入文字' : '默声模式：输入文字和 Amadeus 对话'}
+            value={textInput}
+            onChange={(e) => setTextInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                void handleSendText();
+              }
+            }}
+            disabled={!webrtcId || isLoading}
+          />
+          <button
+            className={styles.sendButton}
+            onClick={() => void handleSendText()}
+            disabled={!webrtcId || isLoading || !textInput.trim()}
+          >
+            发送
+          </button>
+        </div>
       </div>
       
       {/* 工具栏，提供各种控制按钮 */}
       <Toolbar
-        isListening={!isMicrophoneMuted}
+        isListening={interactionMode === 'voice' && !isMicrophoneMuted}
         isVideoOn={isVideoOn}
         onToggleListening={handleToggleMicrophone}
         onToggleVideo={handleToggleVideo}

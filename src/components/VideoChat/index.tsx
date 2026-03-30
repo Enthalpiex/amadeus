@@ -11,16 +11,32 @@ const VideoChat = ({ sendMessage }: VideoChatProps) => {
   const videoElement = useRef<HTMLVideoElement | null>(null)
   const videoContainer = useRef<HTMLDivElement | null>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  const streamRef = useRef<MediaStream | null>(null)
   const [position, setPosition] = useState({ x: 0, y: 0 })
   const [isDragging, setIsDragging] = useState(false)
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 })
-  const [stream, setStream] = useState<MediaStream | null>(null)
   const [isActive, setIsActive] = useState(true) // 控制是否发送视频帧
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('user') // 前置或后置摄像头
   const [isSwitchingCamera, setIsSwitchingCamera] = useState(false) // 切换摄像头的状态
 
+  const stopCurrentStream = () => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop())
+      streamRef.current = null
+    }
+
+    if (videoElement.current) {
+      videoElement.current.srcObject = null
+    }
+  }
+
   const captureAndSendFrame = () => {
     if (!videoElement.current || !canvasRef.current || !isActive) return
+    if (!streamRef.current) return
+
+    const videoTrack = streamRef.current.getVideoTracks()[0]
+    if (!videoTrack || videoTrack.readyState !== 'live') return
+    if (videoElement.current.readyState < 2) return
 
     const canvas = canvasRef.current
     const context = canvas.getContext('2d')
@@ -44,12 +60,9 @@ const VideoChat = ({ sendMessage }: VideoChatProps) => {
     if (isSwitchingCamera) return // 防止重复调用
 
     setIsSwitchingCamera(true) // 开始切换
-    
-    // 停止当前流
-    if (stream) {
-      stream.getTracks().forEach(track => track.stop())
-      setStream(null) // 清空当前流，避免黑屏时仍显示旧画面
-    }
+
+    // 切换前先彻底停止当前流，避免摄像头被持续占用
+    stopCurrentStream()
 
     try {
       // 首先尝试使用指定的摄像头模式
@@ -68,7 +81,7 @@ const VideoChat = ({ sendMessage }: VideoChatProps) => {
       }
       
       // 设置流并更新视频元素
-      setStream(newStream)
+      streamRef.current = newStream
       if (videoElement.current) {
         videoElement.current.srcObject = newStream
         // 添加监听器确保视频成功播放
@@ -89,7 +102,7 @@ const VideoChat = ({ sendMessage }: VideoChatProps) => {
             audio: false
           })
           
-          setStream(fallbackStream)
+          streamRef.current = fallbackStream
           if (videoElement.current) {
             videoElement.current.srcObject = fallbackStream
             videoElement.current.onloadedmetadata = () => {
@@ -165,7 +178,7 @@ const VideoChat = ({ sendMessage }: VideoChatProps) => {
   }
 
   useEffect(() => {
-    getCameraStream(facingMode)
+    getCameraStream('user')
     
     // 发送视频开启状态
     sendMessage({
@@ -176,27 +189,30 @@ const VideoChat = ({ sendMessage }: VideoChatProps) => {
     // 减少帧率到每3秒发送一次，减少网络和服务器负担
     const frameInterval = setInterval(captureAndSendFrame, 3000)
 
-    document.addEventListener('mousemove', onMouseMove)
-    document.addEventListener('mouseup', onMouseUp)
-    document.addEventListener('touchmove', onTouchMove, { passive: false })
-    document.addEventListener('touchend', onMouseUp)
-
     return () => {
-      if (stream) {
-        stream.getTracks().forEach(track => track.stop())
-      }
+      stopCurrentStream()
       // 发送视频关闭状态
       sendMessage({
         type: MessageTypes.VIDEO_STATE,
         data: 'off'
       })
       clearInterval(frameInterval)
+    }
+  }, [])
+
+  useEffect(() => {
+    document.addEventListener('mousemove', onMouseMove)
+    document.addEventListener('mouseup', onMouseUp)
+    document.addEventListener('touchmove', onTouchMove, { passive: false })
+    document.addEventListener('touchend', onMouseUp)
+
+    return () => {
       document.removeEventListener('mousemove', onMouseMove)
       document.removeEventListener('mouseup', onMouseUp)
       document.removeEventListener('touchmove', onTouchMove)
       document.removeEventListener('touchend', onMouseUp)
     }
-  }, [isDragging, dragStart, isActive]) // 不要在useEffect依赖中包含facingMode，避免循环
+  }, [isDragging, dragStart])
 
   return (
     <>

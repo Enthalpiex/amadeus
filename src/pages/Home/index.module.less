@@ -78,6 +78,76 @@
   flex-grow: 1;
 }
 
+.textInputArea {
+  display: flex;
+  gap: 8px;
+  padding: 10px;
+  align-items: center;
+  border-top: 1px solid rgba(255, 255, 255, 0.15);
+}
+
+.modeSwitch {
+  display: flex;
+  gap: 6px;
+}
+
+.modeButton {
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+  padding: 0 10px;
+  height: 34px;
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.modeButtonActive {
+  border-color: #ffbe0b;
+  background: rgba(255, 190, 11, 0.2);
+}
+
+.textInput {
+  flex: 1;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  border-radius: 8px;
+  background: rgba(10, 10, 12, 0.45);
+  color: #fff;
+  padding: 8px 10px;
+  font-size: 14px;
+
+  &::placeholder {
+    color: rgba(255, 255, 255, 0.55);
+  }
+
+  &:focus {
+    outline: none;
+    border-color: #ffbe0b;
+    box-shadow: 0 0 0 2px rgba(255, 190, 11, 0.2);
+  }
+
+  &:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+}
+
+.sendButton {
+  border: none;
+  border-radius: 8px;
+  background: linear-gradient(to right, #ffbe0b, #fb5607);
+  color: #fff;
+  padding: 0 14px;
+  font-size: 14px;
+  cursor: pointer;
+
+  &:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+}
+
 .loadingDot {
   display: inline-block;
   width: 4px;
@@ -98,6 +168,22 @@
 
 @media (max-width: 768px) {
   .content {
+    font-size: 12px;
+  }
+
+  .textInputArea {
+    flex-wrap: wrap;
+  }
+
+  .modeSwitch {
+    width: 100%;
+  }
+
+  .modeButton {
+    flex: 1;
+  }
+
+  .textInput {
     font-size: 12px;
   }
 }
